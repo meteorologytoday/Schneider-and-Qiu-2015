@@ -1,11 +1,15 @@
 mutable struct PhyParams
-
-    J :: Float64   # momentum vertical diffusivity 
-    K :: Float64   # buoyancy horizontal diffusivity
-    N :: Float64   # Stability of the atmosphere 
-    C :: Float64   
-    k :: Float64   
-    
-    L :: AbstractArray{Float64, 1}   # momentum horizontal diffusivity
-
+    f0     :: Float64    
+    ΔΘ     :: Float64
+    Θ0     :: Float64
+    g0     :: Float64
+    h_0    :: Float64
+    A_h    :: Float64
+    γ_Θ    :: Float64
+    E0     :: Float64
+    dlnγdδ :: Float64
+    γ0     :: Float64
+    s0     :: Float64
 end
+
+

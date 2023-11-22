@@ -7,8 +7,8 @@ include("BLM.jl")
 
 m = BLM.Model(BLM.Env(
     f0 = 1e-4,
-    Δx = 5e3,
-    Δy = 5e3,
+    Δx = 2e3,
+    Δy = 2e3,
     Nx = 100,
     Ny = 100,
     Nz = 10,
@@ -51,7 +51,7 @@ E0 = 1e-5
 dlnEdδ = 0.6
 ug .= 20.0
 vg .= 0.0
-du0ds_0 = 0.1
+du0ds_0 = 1e-7
 dv0ds_0 = 0.00
 s0 = 0.05
 γ0 = 0.3
@@ -261,8 +261,8 @@ println("Size of op_mom_adv: ", size(op_mom_adv))
 
 # Derive bottom Neumann boundary conditions
 
-τx_1_0 = -1.0
-τy_1_0 = 1.0
+τx_1_0 = 1e-13
+τy_1_0 = 0.0
 u_0_W = amo_col.W_interp_T * u_0[:]
 v_0_W = amo_col.W_interp_T * v_0[:]
 
@@ -273,6 +273,10 @@ dv_1ds_bc_W = zeros(Float64, amo.bmo.W_dim...)
 E_0_0 = getE_0(zeros(Float64, gd.Nx, gd.Ny))
 E_1_0 = getE_1(zeros(Float64, gd.Nx, gd.Ny), reshape(δ_1, gd.Nx, gd.Ny))
 
+println("E_0_0 = ", getE_0(0.0))
+println("E_1_0 = ", getE_1(0.0, 1.0))
+println("du0ds_0 = ", du0ds_0)
+println("τx_1_0 = ", τx_1_0)
 
 du_1ds_bc_W[:, :, 1] = ( τx_1_0 .- E_1_0 * du0ds_0 ) ./ E_0_0
 dv_1ds_bc_W[:, :, 1] = ( τy_1_0 .- E_1_0 * dv0ds_0 ) ./ E_0_0
@@ -348,7 +352,7 @@ RHS_mom_vdif = (
   * [ duds_0_W ; dvds_0_W ; ]
 )
 
-RHS_mom_vdif_bc = 0*(
+RHS_mom_vdif_bc = (
     blockdiag(amo.T_DIVz_W, amo.T_DIVz_W) * [ du_1ds_bc_W[:] ; dv_1ds_bc_W[:] ; ]
 )
 

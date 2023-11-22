@@ -1,5 +1,5 @@
 using SparseArrays
-using LinearAlgebra
+using LinearAlgebra, Arpack
 using YAXArrays, DimensionalData, NetCDF
 include("BLM.jl")
 
@@ -7,10 +7,10 @@ include("BLM.jl")
 
 m = BLM.Model(BLM.Env(
     f0 = 1e-4,
-    Δx = 5e3,
-    Δy = 5e3,
-    Nx = 50,
-    Ny = 50,
+    Δx = 2e3,
+    Δy = 2e3,
+    Nx = 100,
+    Ny = 100,
     Nz = 10,
 ))
 
@@ -36,12 +36,11 @@ dUds_0_y = view(dUds_0, (Ns+2):(2*(Ns+1)))
 
 # ===== constants =====
 
+h_diffusivity = 1e2
 ΔΘ = 1.0
 Θ0 = 300.0
 g0 = 10.0
 reduced_g0 = g0 * ΔΘ / Θ0
-
-
 
 
 # ===== Solving for 0st order =====
@@ -49,18 +48,18 @@ println("Solving for 0st order")
 # Construct operator
 f0 = m.ev.f0
 E0 = 1e-5
-dlnEdδ = 0 * 0.6
-ug .= 5.0
+dlnEdδ = 0.6
+ug .= 20.0
 vg .= 0.0
-du0ds_0 = 0.1
-dv0ds_0 = 0.0
+du0ds_0 = 1e-7
+dv0ds_0 = 0.00
 s0 = 0.05
 γ0 = 0.3
 
 # E_0_W is the zero-th order E, while E0 is a constant
 function getE_0(z)
     tmp =  (z .+ s0) / γ0
-    return tmp .* E0 .* exp.( 1.0 .- tmp ) * 0 .+ E0
+    return tmp .* E0 .* exp.( 1.0 .- tmp ) #* 0 .+ E0
 end
 
 function getE_1(z, δ)
@@ -193,17 +192,24 @@ sT_send_h_1_esT = [   sparse(I, sT_pts - 1, sT_pts-1) ;
 #full_send_eff = eff_send_full'
 
 
-full_send_eff = blockdiag(sparse(I, U_pts, U_pts), sparse(I, V_pts, V_pts), W_send_eW, sT_send_h_1_esT)
+full_send_eff = blockdiag(sparse(I, T_pts, T_pts), sparse(I, T_pts, T_pts), W_send_eW, sT_send_h_1_esT)
 
 println("Size of full_send_eff: ", size(full_send_eff))
 
 # 3: formulate operator
+
+u_0_T = repeat(reshape(u_0, 1, 1, :), outer=(gd.Nx, gd.Ny, 1))
+v_0_T = repeat(reshape(v_0, 1, 1, :), outer=(gd.Nx, gd.Ny, 1))
+
+T_u_0_T = spdiagm(0 => u_0_T[:] )
+T_v_0_T = spdiagm(0 => v_0_T[:] )
 
 u_0_U = repeat(reshape(u_0, 1, 1, :), outer=(gd.Nx, gd.Ny, 1))
 v_0_V = repeat(reshape(v_0, 1, 1, :), outer=(gd.Nx, gd.Ny, 1))
 
 U_u_0_U = spdiagm(0 => u_0_U[:] )
 V_v_0_V = spdiagm(0 => v_0_V[:] )
+
 
 
 println("1: SIZE of amo_slb.U_∂x_T ", size(repeat(amo_slb.U_∂x_T, outer=(gd.Nz, 1))))
@@ -216,19 +222,28 @@ println("V_pts  : ", V_pts)
 println("W_pts  : ", W_pts)
 
 op_cont = sparse((
-      h_0 * [ amo.T_DIVx_U  amo.T_DIVy_V  spzeros(Float64, T_pts, W_pts + sT_pts) ]
+      h_0 * [ (amo.T_DIVx_U * amo.U_interp_T)  (amo.T_DIVy_V * amo.V_interp_T)  spzeros(Float64, T_pts, W_pts + sT_pts) ]
       + [ (amo.T_interp_U * U_u_0_U)  (amo.T_interp_V * V_v_0_V) ]  
-      * [ spzeros(Float64, U_pts, U_pts + V_pts + W_pts)   repeat(amo_slb.U_∂x_T, outer=(gd.Nz, 1)) ; 
-        spzeros(Float64, V_pts, U_pts + V_pts + W_pts)   repeat(amo_slb.V_∂y_T, outer=(gd.Nz, 1)) ; ]
-      + [ spzeros(Float64, T_pts, U_pts + V_pts)  amo.T_DIVz_W  spzeros(Float64, T_pts, sT_pts) ]
+      * [ spzeros(Float64, T_pts, T_pts + T_pts + W_pts)   repeat(amo_slb.U_∂x_T, outer=(gd.Nz, 1)) ; 
+          spzeros(Float64, T_pts, T_pts + T_pts + W_pts)   repeat(amo_slb.V_∂y_T, outer=(gd.Nz, 1)) ; ]
+      + [ spzeros(Float64, T_pts, T_pts + T_pts)  amo.T_DIVz_W  spzeros(Float64, T_pts, sT_pts) ]
+      - [ spzeros(Float64, T_pts, T_pts + T_pts + W_pts)   h_diffusivity * ( repeat(amo_slb.T_DIVx_U * amo_slb.U_∂x_T + amo_slb.T_DIVy_V * amo_slb.V_∂y_T, outer=(gd.Nz, 1)) ) ]
 ))
 
+println("Size of op_cont: ", size(op_cont))
+
+
+println("Size of bmo.T_I_T: ", size(bmo.T_I_T))
 
 op_mom_cori = m.ev.f0 * sparse([
-    spzeros(Float64, U_pts, U_pts)  (- amo.U_interp_V)              spzeros(Float64, U_pts, W_pts + sT_pts) ;
-    amo.V_interp_U                  spzeros(Float64, V_pts, V_pts)  spzeros(Float64, V_pts, W_pts + sT_pts) ; 
+    spzeros(Float64, T_pts, T_pts)  (- bmo.T_I_T)                   spzeros(Float64, T_pts, W_pts + sT_pts) ;
+    bmo.T_I_T                       spzeros(Float64, T_pts, T_pts)  spzeros(Float64, T_pts, W_pts + sT_pts) ; 
 ])
 
+println("Size of op_mom_cori: ", size(op_mom_cori))
+
+
+#=
 op_mom_adv   = sparse(
     [ bmo.U_I_U  amo.U_interp_V  spzeros(Float64, U_pts, U_pts)  spzeros(Float64, U_pts, V_pts) ;
       spzeros(Float64, V_pts, U_pts)  spzeros(Float64, V_pts, V_pts)  amo.V_interp_U  bmo.V_I_V ; ] * 
@@ -237,24 +252,16 @@ op_mom_adv   = sparse(
       spzeros(Float64, U_pts, U_pts)   U_u_0_U * amo.U_∂x_T * amo.T_interp_V  spzeros(Float64, U_pts, W_pts + sT_pts) ;
       spzeros(Float64, U_pts, U_pts)   V_v_0_V * amo.V_∂y_V                   spzeros(Float64, U_pts, W_pts + sT_pts) ; ]
 )
-
-tmp_op = blockdiag(amo.U_interp_T * amo.T_DIVz_W, amo.V_interp_T, amo.T_DIVz_W)
-
-
-
-
-
-
-#) * full_send_eff)
-
-println("Size of op_cont: ", size(op_cont))
-println("Size of full_send_eff: ", size(full_send_eff))
-
-
+=#
+    
+tmp = (T_u_0_T * amo.T_interp_U * amo.U_∂x_T)  +  (T_v_0_T * amo.T_interp_V * amo.V_∂y_T)
+println("Size of tmp: ", size(tmp))
+op_mom_adv = [ blockdiag(tmp, tmp)  spzeros(Float64, 2*T_pts, W_pts + sT_pts) ]
+println("Size of op_mom_adv: ", size(op_mom_adv))
 
 # Derive bottom Neumann boundary conditions
 
-τx_1_0 = 0.0
+τx_1_0 = 1e-13
 τy_1_0 = 0.0
 u_0_W = amo_col.W_interp_T * u_0[:]
 v_0_W = amo_col.W_interp_T * v_0[:]
@@ -266,6 +273,10 @@ dv_1ds_bc_W = zeros(Float64, amo.bmo.W_dim...)
 E_0_0 = getE_0(zeros(Float64, gd.Nx, gd.Ny))
 E_1_0 = getE_1(zeros(Float64, gd.Nx, gd.Ny), reshape(δ_1, gd.Nx, gd.Ny))
 
+println("E_0_0 = ", getE_0(0.0))
+println("E_1_0 = ", getE_1(0.0, 1.0))
+println("du0ds_0 = ", du0ds_0)
+println("τx_1_0 = ", τx_1_0)
 
 du_1ds_bc_W[:, :, 1] = ( τx_1_0 .- E_1_0 * du0ds_0 ) ./ E_0_0
 dv_1ds_bc_W[:, :, 1] = ( τy_1_0 .- E_1_0 * dv0ds_0 ) ./ E_0_0
@@ -279,21 +290,16 @@ rmtop_W[:, :, end] .= 0.0
 W_rmbot_W = spdiagm(0=>view(rmbot_W, :))
 W_rmtop_W = spdiagm(0=>view(rmtop_W, :))
 
-shared_op = blockdiag(
-    amo.U_interp_T * amo.T_DIVz_W,
-    amo.V_interp_T * amo.T_DIVz_W,
+op_mom_vdif = - ( blockdiag(amo.T_DIVz_W, amo.T_DIVz_W)
+     * blockdiag(W_rmbot_W * amo.W_∂z_W * W_rmtop_W, 
+                 W_rmbot_W * amo.W_∂z_W * W_rmtop_W,)
+     * [ blockdiag(amo.W_interp_T, amo.W_interp_T)  spzeros(Float64, 2 * W_pts, W_pts + sT_pts) ]
 )
 
-op_mom_vdif = - shared_op * blockdiag(
-    W_rmbot_W * amo.W_∂z_W * W_rmtop_W,
-    W_rmbot_W * amo.W_∂z_W * W_rmtop_W,
-) * [ blockdiag(amo.W_interp_U, amo.W_interp_V)  spzeros(Float64, 2 * W_pts, W_pts + sT_pts) ]
 
-
-
-U_∂x_sT = repeat(sparse(I, sU_pts, sU_pts), outer=(gd.Nz, 1)) * amo_slb.U_∂x_T
-V_∂y_sT = repeat(sparse(I, sV_pts, sV_pts), outer=(gd.Nz, 1)) * amo_slb.V_∂y_T
-op_mom_back_pressure = reduced_g0 * [ spzeros(Float64, U_pts + V_pts, U_pts + V_pts + W_pts)  [ U_∂x_sT ; V_∂y_sT ; ] ]
+T_∂x_sT = repeat(sparse(I, sT_pts, sT_pts), outer=(gd.Nz, 1)) * amo_slb.T_interp_U * amo_slb.U_∂x_T
+T_∂y_sT = repeat(sparse(I, sT_pts, sT_pts), outer=(gd.Nz, 1)) * amo_slb.T_interp_V * amo_slb.V_∂y_T
+op_mom_reduced_gravity = reduced_g0 * [ spzeros(Float64, 2*T_pts, 2*T_pts + W_pts)  [ T_∂x_sT ; T_∂y_sT ; ] ]
 
 # building vertical advection operator
 duds_0_cW = amo_col.W_∂z_T * u_0[:]
@@ -301,58 +307,53 @@ duds_0_cW[1] = du0ds_0
 duds_0_cW[end] = 0.0
 duds_0_cT = amo_col.T_interp_W * duds_0_cW
 
-duds_0_U = repeat( reshape(duds_0_cT, 1, 1, :), outer=(gd.Nx, gd.Ny, 1))[:]
-U_duds_0_U = spdiagm(0=>duds_0_U)
+duds_0_T = repeat( reshape(duds_0_cT, 1, 1, :), outer=(gd.Nx, gd.Ny, 1))[:]
+T_duds_0_T = spdiagm(0=>duds_0_T)
 
 dvds_0_cW = amo_col.W_∂z_T * v_0[:]
 dvds_0_cW[1] = dv0ds_0
 dvds_0_cW[end] = 0.0
 dvds_0_cT = amo_col.T_interp_W * dvds_0_cW
 
-dvds_0_V = repeat( reshape(dvds_0_cT, 1, 1, :), outer=(gd.Nx, gd.Ny, 1))[:]
-V_dvds_0_V = spdiagm(0=>dvds_0_V)
+dvds_0_T = repeat( reshape(dvds_0_cT, 1, 1, :), outer=(gd.Nx, gd.Ny, 1))[:]
+T_dvds_0_T = spdiagm(0=>dvds_0_T)
 
-op_mom_vadv = blockdiag(U_duds_0_U, V_dvds_0_V) * [ 
-    spzeros(Float64, U_pts + V_pts, U_pts + V_pts)  [ amo.U_interp_W ; amo.V_interp_W ; ] spzeros(U_pts + V_pts, sT_pts)
+op_mom_vadv = blockdiag(T_duds_0_T, T_dvds_0_T) * [ 
+    spzeros(Float64, 2 * T_pts, 2 * T_pts)  [ amo.T_interp_W ; amo.T_interp_W ; ] spzeros(2 * T_pts, sT_pts)
 ] 
 
 println("Size of op_cont: ", size(op_cont))
-
 println("Size of op_mom_adv: ", size(op_mom_adv))
 println("Size of op_mom_vadv: ", size(op_mom_vadv))
 println("Size of op_mom_cori: ", size(op_mom_cori))
 println("Size of op_mom_vdif: ", size(op_mom_vdif))
-println("Size of op_mom_back_pressure: ", size(op_mom_back_pressure))
+println("Size of op_mom_reduced_gravity: ", size(op_mom_reduced_gravity))
 
 
 
-op_mom = op_mom_adv + op_mom_vadv + op_mom_cori + op_mom_vdif + op_mom_back_pressure
+#op_mom = op_mom_adv + op_mom_vadv + op_mom_cori + op_mom_vdif + op_mom_reduced_gravity
+#op_mom = op_mom_cori + op_mom_vdif + op_mom_reduced_gravity
+op_mom = op_mom_cori + op_mom_reduced_gravity
 #op_mom = op_mom_cori# + op_mom_vdif )
 println("Size of op_mom: ", size(op_mom))
 
 # Construct right-hand-side
 
-
-U_hgt_factor_U = spdiagm(0 => (1.0 .- gd.z_U[:]))
-V_hgt_factor_V = spdiagm(0 => (1.0 .- gd.z_V[:]))
-
-#U_hgt_factor_U = spdiagm(0 => (1.0 .- 0*gd.z_U[:]))
-#V_hgt_factor_V = spdiagm(0 => (1.0 .- 0*gd.z_V[:]))
-
-RHS_mom_pt = (reduced_g0 * h_0 / ΔΘ) * [ U_hgt_factor_U * U_∂x_sT ; V_hgt_factor_V * V_∂y_sT ; ] * Θ_1
+hgt_factor = spdiagm(0 => (1.0 .- gd.z_T[:]))
+RHS_mom_pt = (reduced_g0 * h_0 / ΔΘ) * [ (hgt_factor * T_∂x_sT) ; (hgt_factor * T_∂y_sT) ; ] * Θ_1
 
 duds_0_W = repeat( reshape(duds_0_cW, 1, 1, :), outer=(gd.Nx, gd.Ny, 1))[:]
 dvds_0_W = repeat( reshape(dvds_0_cW, 1, 1, :), outer=(gd.Nx, gd.Ny, 1))[:]
 W_E_1_W = spdiagm(0=> getE_1(gd.z_W, repeat( reshape(δ_1, gd.Nx, gd.Ny, 1), outer=(1, 1, gd.Nz+1) ))[:] )
 
 RHS_mom_vdif = ( 
-    blockdiag(amo.U_interp_T * amo.T_DIVz_W, amo.V_interp_T * amo.T_DIVz_W)
+    blockdiag(amo.T_DIVz_W, amo.T_DIVz_W)
   * blockdiag(W_E_1_W, W_E_1_W)
   * [ duds_0_W ; dvds_0_W ; ]
 )
 
 RHS_mom_vdif_bc = (
-    shared_op * [ du_1ds_bc_W[:] ; dv_1ds_bc_W[:] ; ]
+    blockdiag(amo.T_DIVz_W, amo.T_DIVz_W) * [ du_1ds_bc_W[:] ; dv_1ds_bc_W[:] ; ]
 )
 
 RHS = [ (RHS_mom_pt + RHS_mom_vdif + RHS_mom_vdif_bc) ; zeros(Float64, T_pts) ; ]
@@ -374,6 +375,12 @@ println("Solving 1th order momentum and height")
 
 @time F = lu(op)
 @time sol = full_send_eff * (F \ RHS)
+
+# Remove unstable modes
+#egvals, egvecs = eigs(op, nev=5, ncv=100, check=1)
+#println("Eigenvalues: ", egvals)
+
+
 # 5: project back to original grid 
 
 
@@ -385,6 +392,7 @@ idx=1
 u_1 = reshape(view(sol, idx:(idx+U_pts-1)),  bmo.U_dim...);     idx += U_pts
 v_1 = reshape(view(sol, idx:(idx+V_pts-1)),  bmo.V_dim...);     idx += V_pts
 w_1 = reshape(view(sol, idx:(idx+W_pts-1)),  bmo.W_dim...);     idx += W_pts
+#h_1 = reshape(amo_slb.T_NEWSavg_T * view(sol, idx:(idx+sT_pts-1)), bmo_slb.T_dim[1:2]...); idx += sT_pts
 h_1 = reshape(view(sol, idx:(idx+sT_pts-1)), bmo_slb.T_dim[1:2]...); idx += sT_pts
 Θ_1 = reshape(Θ_1, bmo_slb.T_dim[1:2]...)
 SST_1 = reshape(SST_1, bmo_slb.T_dim[1:2]...)
@@ -436,7 +444,7 @@ data = Dict(
 
 ds = Dataset(;data...)
 
-filename = "test_solution_version1.nc"
+filename = "test_solution.nc"
 savedataset(ds,path = filename, driver=:netcdf, overwrite=true)
 
 println("Loading PyPlot")
