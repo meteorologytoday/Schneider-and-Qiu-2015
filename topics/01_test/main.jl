@@ -1,12 +1,13 @@
 using SparseArrays
 using LinearAlgebra, Arpack
 using NetCDF, YAXArrays, DimensionalData
-include("BLM.jl")
-include("tools.jl")
+
+include("../../src/BLM.jl")
+include("../../src/tools.jl")
 
 
 output_filename = "solved_model.nc"
-Ug = 15.0
+Ug = 20.0
 Vg = 0.0
 
 
@@ -21,8 +22,8 @@ else
     m = BLM.Model(BLM.Env(
         Δx = 5e3,
         Δy = 5e3,
-        Nx = 50,
-        Ny = 50,
+        Nx = 500,
+        Ny = 4,
         Nz = 10,
         f0 = 1e-4,
         ΔΘ = 10.0,
