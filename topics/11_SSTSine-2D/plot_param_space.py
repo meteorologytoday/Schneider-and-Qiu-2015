@@ -88,13 +88,13 @@ for i, Ug in enumerate(args.Ugs):
         #data["U1delta1"][i] = np.sum(dx_T * U_1 * delta_1) / np.sum(dx_T)
         #data["U0delta1"][i] = np.sum(dx_T * U_0 * delta_1) / np.sum(dx_T)
         U_mean = np.sum(dx_T * U) / np.sum(dx_T)
-        delta_mean = np.sum(dx_T * delta) / np.sum(dx_T)
+        TOA_mean = np.sum(dx_T * TOA) / np.sum(dx_T)
 
         #data["Udelta_FULL"][i, j, 0] = np.sum(dx_T * U * delta) / np.sum(dx_T)
         #data["U_mean"][i, j, 0]      = U_mean
         #data["delta_mean"][i, j, 0]  = delta_mean
         #data["Udelta_CORR"][i, j, 0] = np.sum(dx_T * (U - U_mean) * (delta - delta_mean)) / np.sum(dx_T)
-        data["TOA"][0, i, j, 0] = np.sum(dx_T * U * TOA) / np.sum(dx_T)
+        data["UTOA"][0, i, j, 0] = np.sum(dx_T * U * TOA) / np.sum(dx_T)
 
         # Bolton (1980)
         def T2q(T, P, RH): # T in Kelvin, results in Pa
@@ -206,7 +206,11 @@ fig, ax = plt.subplots(
     sharex=True,
 )
 
-
+fig.suptitle("$ \\Delta \\Theta = {DTheta:d} \\mathrm{{K}} $, $ \\mathrm{{RH}} = {RH:.1f} \\% $".format(
+    DTheta = int(args.selected_DTheta),
+    RH     = args.RH * 1e2,
+))
+ 
 for i, varname in enumerate(varnames):
     
     _ax = ax.flatten()[i]
